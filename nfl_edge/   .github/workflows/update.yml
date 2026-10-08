@@ -1,0 +1,103 @@
+name: Update odds
+
+# Thursdays at 9:00 AM New York time, plus a "Run workflow" button for on-demand updates
+# (Sunday props, line moves). GitHub schedules are in UTC, so both the summer (EDT) and
+# winter (EST) times are listed and the first step keeps only the one that is 9 AM locally.
+on:
+  schedule:
+    - cron: "0 13 * * 4"   # 9 AM EDT
+    - cron: "0 14 * * 4"   # 9 AM EST
+  workflow_dispatch:
+    inputs:
+      props:
+        description: "Include player props (about 6 credits per game)"
+        type: boolean
+        default: true
+      props_games:
+        description: "Only these teams' games, e.g. IND,KC (blank = every game)"
+        type: string
+        default: ""
+  push:
+    branches: [main]
+    paths: ["docs/index.html"]   # app changes redeploy the site without spending credits
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: update-odds
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Skip the schedule that isn't 9 AM in New York today
+        id: gate
+        run: |
+          run=true
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            offset=$(TZ=America/New_York date +%z)
+            if [ "$offset" = "-0400" ] && [ "${{ github.event.schedule }}" != "0 13 * * 4" ]; then run=false; fi
+            if [ "$offset" = "-0500" ] && [ "${{ github.event.schedule }}" != "0 14 * * 4" ]; then run=false; fi
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.run == 'true'
+
+      - uses: actions/setup-python@v5
+        if: steps.gate.outputs.run == 'true' && github.event_name != 'push'
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Restore NFL data (old seasons don't change)
+        if: steps.gate.outputs.run == 'true' && github.event_name != 'push'
+        uses: actions/cache@v4
+        with:
+          path: |
+            data/*.parquet
+            data/games.csv
+          key: nfl-data-${{ github.run_id }}
+          restore-keys: nfl-data-
+
+      - name: Install
+        if: steps.gate.outputs.run == 'true' && github.event_name != 'push'
+        run: pip install -r requirements.txt
+
+      - name: Run the model
+        if: steps.gate.outputs.run == 'true' && github.event_name != 'push'
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+        run: |
+          if [ -z "$ODDS_API_KEY" ]; then echo "::error::Add the ODDS_API_KEY secret (Settings > Secrets and variables > Actions)"; exit 1; fi
+          args=""
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ inputs.props }}" = "true" ]; then args="--props"; fi
+          if [ -n "${{ inputs.props_games }}" ]; then args="$args --props-games ${{ inputs.props_games }}"; fi
+          python picks.py $args
+          cp output/board.json docs/board.json
+
+      - name: Save this week's board
+        if: steps.gate.outputs.run == 'true' && github.event_name != 'push'
+        run: |
+          git config user.name "odds-bot"
+          git config user.email "odds-bot@users.noreply.github.com"
+          git add docs/board.json
+          git commit -m "Odds update $(TZ=America/New_York date '+%a %b %d %I:%M %p')" || echo "No changes"
+          git push
+
+      - uses: actions/configure-pages@v5
+        if: steps.gate.outputs.run == 'true'
+      - uses: actions/upload-pages-artifact@v3
+        if: steps.gate.outputs.run == 'true'
+        with:
+          path: docs
+      - id: deploy
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/deploy-pages@v4

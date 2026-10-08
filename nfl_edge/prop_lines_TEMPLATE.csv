@@ -1,0 +1,6 @@
+player,team,opponent,market,line,over_odds,under_odds,book
+Jonathan Taylor,IND,WAS,rush_yds,84.5,-115,-105,EXAMPLE
+Jonathan Taylor,IND,WAS,anytime_td,0.5,-210,,EXAMPLE
+Tyler Warren,IND,WAS,receptions,4.5,-120,100,EXAMPLE
+Terry McLaurin,WAS,IND,rec_yds,58.5,-110,-110,EXAMPLE
+Aaron Rodgers,PIT,CLE,pass_yds,221.5,-110,-110,EXAMPLE
